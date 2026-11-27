@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Clinical Logbook</title>
+<style>
+:root{--bg:#f2f5f7;--fg:#12232e;--mut:#5d717e;--card:#fff;--bd:#d5dee4;--ac:#0b6e8a;--ok:#1f7a4d;--warn:#b4691f;--bad:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1a21;--fg:#e8f0f4;--mut:#93a8b4;--card:#16252e;--bd:#2a3f4b;--ac:#4fb3d0;--ok:#4cc38a;--warn:#e3a05c;--bad:#f2837c}}
+*{box-sizing:border-box}
+body{font:15px/1.55 system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0}
+main{max-width:820px;margin:0 auto;padding:20px 16px 48px}
+h1,h2{font-family:Georgia,serif;font-weight:600;margin:0 0 8px}
+h1{font-size:26px}h2{font-size:19px;margin-top:24px}
+.bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:14px 16px;margin:10px 0}
+.entry{border-left:5px solid var(--warn)}
+.entry.signed{border-left-color:var(--ok)}.entry.returned{border-left-color:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+label{display:block;font-weight:500;margin:8px 0}
+input,select,textarea{display:block;width:100%;margin-top:4px;padding:8px;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--bd);border-radius:4px}
+button{font:inherit;padding:8px 14px;border:0;border-radius:4px;background:var(--ac);color:#fff;cursor:pointer}
+button.sec{background:transparent;color:var(--ac);border:1px solid var(--ac)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid var(--ac);outline-offset:2px}
+.mut{color:var(--mut)}.err{color:var(--bad);min-height:1.2em}
+.pill{display:inline-block;padding:0 8px;border:1px solid var(--bd);border-radius:10px;margin:2px 4px 2px 0}
+.status{font-weight:600}.status.signed{color:var(--ok)}.status.returned{color:var(--bad)}.status.pending{color:var(--warn)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}.row input{flex:1;min-width:160px;margin:0}
+</style></head><body><main id="app"></main>
+<script>
+const $=s=>document.querySelector(s);
+let tok=localStorage.getItem("t"),me=JSON.parse(localStorage.getItem("u")||"null"),L=[];
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+async function api(p,m="GET",b){
+  const r=await fetch("/api/"+p,{method:m,headers:{"content-type":"application/json",authorization:"Bearer "+tok},body:b?JSON.stringify(b):undefined});
+  const d=await r.json().catch(()=>({}));
+  if(r.status===401&&tok){out();}
+  if(!r.ok)throw new Error(d.error||"Something went wrong.");
+  return d;
+}
+function out(){localStorage.clear();tok=me=null;authView(false)}
+function save(d){tok=d.token;me=d.user;localStorage.setItem("t",tok);localStorage.setItem("u",JSON.stringify(me));start()}
+async function auth(mode){
+  try{
+    const b={email:$("#e").value,password:$("#p").value};
+    if(mode==="register"){b.name=$("#n").value;b.role=$("#r").value;b.code=$("#c").value}
+    save(await api(mode,"POST",b));
+  }catch(e){$("#err").textContent=e.message}
+}
+function authView(reg){
+  $("#app").innerHTML=`<h1>Clinical logbook</h1><p class="mut">Record cases and procedures. Supervisors review and sign off.</p>
+  <div class="card">${reg?`<label>Name<input id="n" autocomplete="name"></label>`:""}
+  <label>Email<input id="e" type="email" autocomplete="email"></label>
+  <label>Password<input id="p" type="password" autocomplete="${reg?"new-password":"current-password"}"></label>
+  ${reg?`<label>Account type<select id="r" onchange="$('#cw').hidden=this.value!=='supervisor'"><option value="student">Student</option><option value="supervisor">Supervisor</option></select></label>
+  <label id="cw" hidden>Supervisor code<input id="c"></label>`:""}
+  <p id="err" class="err" role="alert"></p>
+  <button onclick="auth('${reg?"register":"login"}')">${reg?"Create account":"Sign in"}</button>
+  <p><a href="#" onclick="authView(${!reg});return false">${reg?"Already registered? Sign in":"New here? Create an account"}</a></p></div>`;
+}
+const head=()=>`<div class="bar"><h1>Clinical logbook</h1><div>${esc(me.name)} (${me.role}) <button class="sec" onclick="out()">Sign out</button></div></div>`;
+const row=(e,i,sup)=>`<div class="card entry ${e.status}"><b>${esc(e.date)} &middot; ${esc(e.rotation)}</b>
+  <span class="status ${e.status}">${e.status}</span><br>${esc(e.caseType)}, ${esc(e.involvement)}${sup?` &middot; ${esc(e.studentName)}`:""}
+  ${e.learning?`<br><span class="mut">${esc(e.learning)}</span>`:""}${e.comment?`<br><i>Supervisor: ${esc(e.comment)}</i>`:""}
+  ${sup?`<div class="row"><input id="c${i}" placeholder="Comment (optional)" value="${esc(e.comment)}">
+  <button onclick="review(${i},'signed')">Sign off</button><button class="sec" onclick="review(${i},'returned')">Return for changes</button></div>`
+  :e.status!=="signed"?`<div class="row"><button class="sec" onclick="del(${i})">Delete</button></div>`:""}</div>`;
+async function start(){
+  if(!tok||!me)return authView(false);
+  try{me.role==="student"?await studentView():await supView()}catch(e){$("#app").innerHTML=head()+`<p class="err">${esc(e.message)}</p>`}
+}
+async function studentView(){
+  const [es,sv]=await Promise.all([api("entries"),api("supervisors")]);L=es;
+  const cnt=k=>Object.entries(es.reduce((a,e)=>(a[e[k]]=(a[e[k]]||0)+1,a),{})).map(([k,v])=>`<span class="pill">${esc(k)}: ${v}</span>`).join("")||"No entries yet";
+  $("#app").innerHTML=head()+`<div class="card"><h2>New entry</h2>
+  <p class="mut">Do not enter patient names, dates of birth or record numbers.</p>
+  <div class="grid"><label>Date<input id="d" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
+  <label>Rotation<input id="ro" placeholder="e.g. Surgery"></label>
+  <label>Case or procedure<input id="ct" placeholder="e.g. Appendicitis, adult"></label>
+  <label>Involvement<select id="iv"><option>Observed</option><option>Assisted</option><option>Performed</option></select></label>
+  <label>Supervisor<select id="sp">${sv.map(s=>`<option value="${esc(s.email)}">${esc(s.name)}</option>`).join("")}</select></label></div>
+  <label>Learning points<textarea id="l" rows="3"></textarea></label>
+  <p id="err" class="err" role="alert">${sv.length?"":"No supervisors have registered yet."}</p>
+  <button onclick="add()">Save entry</button></div>
+  <div class="card"><h2>Summary</h2><p>By rotation: ${cnt("rotation")}</p><p>By involvement: ${cnt("involvement")}</p>
+  <button class="sec" onclick="csv()">Export CSV</button></div>
+  <h2>My entries</h2>`+(es.map((e,i)=>row(e,i,false)).join("")||`<p class="mut">Add your first entry above.</p>`);
+}
+async function supView(){
+  const es=await api("entries");L=es;
+  const p=es.filter(e=>e.status==="pending").length;
+  $("#app").innerHTML=head()+`<h2>Student entries</h2><p class="mut">${p} waiting for review.</p>`+
+  (es.map((e,i)=>row(e,i,true)).join("")||`<p class="mut">No students have chosen you as supervisor yet.</p>`);
+}
+async function add(){
+  try{await api("entries","POST",{date:$("#d").value,rotation:$("#ro").value,caseType:$("#ct").value,involvement:$("#iv").value,supervisor:$("#sp").value,learning:$("#l").value});start()}
+  catch(e){$("#err").textContent=e.message}
+}
+async function del(i){if(confirm("Delete this entry?")){await api(`entries/${encodeURIComponent(L[i].student)}/${L[i].id}`,"DELETE");start()}}
+async function review(i,status){
+  await api(`entries/${encodeURIComponent(L[i].student)}/${L[i].id}`,"PUT",{status,comment:$("#c"+i).value});start();
+}
+function csv(){
+  const q=v=>'"'+String(v??"").replace(/"/g,'""')+'"';
+  const t=[["Date","Rotation","Case","Involvement","Learning","Status","Supervisor comment"],...L.map(e=>[e.date,e.rotation,e.caseType,e.involvement,e.learning,e.status,e.comment])].map(r=>r.map(q).join(",")).join("\n");
+  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([t],{type:"text/csv"}));a.download="logbook.csv";a.click();
+}
+start();
+</script></body></html>
